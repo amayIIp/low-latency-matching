@@ -29,15 +29,65 @@ void* operator new(size_t size) {
     return std::malloc(size);
 }
 
+// Global override of the array 'new[]' operator.
+void* operator new[](size_t size) {
+    if (lob::allocations_forbidden.load(std::memory_order_relaxed)) {
+        std::cerr << "CRITICAL ERROR: Dynamic memory allocation of " << size 
+                  << " bytes attempted while allocations_forbidden is ACTIVE!\n";
+        std::abort();
+    }
+    return std::malloc(size);
+}
+
+// Global override of the nothrow 'new' operator.
+void* operator new(size_t size, const std::nothrow_t&) noexcept {
+    if (lob::allocations_forbidden.load(std::memory_order_relaxed)) {
+        std::cerr << "CRITICAL ERROR: Dynamic memory allocation of " << size 
+                  << " bytes attempted while allocations_forbidden is ACTIVE!\n";
+        std::abort();
+    }
+    return std::malloc(size);
+}
+
+// Global override of the nothrow array 'new[]' operator.
+void* operator new[](size_t size, const std::nothrow_t&) noexcept {
+    if (lob::allocations_forbidden.load(std::memory_order_relaxed)) {
+        std::cerr << "CRITICAL ERROR: Dynamic memory allocation of " << size 
+                  << " bytes attempted while allocations_forbidden is ACTIVE!\n";
+        std::abort();
+    }
+    return std::malloc(size);
+}
+
 // Global override of the standard single-object 'delete' operator.
 void operator delete(void* p) noexcept {
     // Free the memory block using free.
     std::free(p);
 }
 
+// Global override of the standard array 'delete[]' operator.
+void operator delete[](void* p) noexcept {
+    std::free(p);
+}
+
 // Global override of the sized single-object 'delete' operator.
 void operator delete(void* p, size_t) noexcept {
     // Free the memory block using free.
+    std::free(p);
+}
+
+// Global override of the sized array 'delete[]' operator.
+void operator delete[](void* p, size_t) noexcept {
+    std::free(p);
+}
+
+// Global override of the nothrow single-object 'delete' operator.
+void operator delete(void* p, const std::nothrow_t&) noexcept {
+    std::free(p);
+}
+
+// Global override of the nothrow array 'delete[]' operator.
+void operator delete[](void* p, const std::nothrow_t&) noexcept {
     std::free(p);
 }
 #endif
@@ -53,6 +103,8 @@ OrderBook::OrderBook()
       bids_levels_(NUM_LEVELS),
       // Initialize vector size for asks array matching NUM_LEVELS slots.
       asks_levels_(NUM_LEVELS),
+      // Pre-allocate lookup array to accommodate order IDs up to 2,000,000 without runtime reallocation.
+      order_index_(2000000, nullptr),
       // Set the initial best bid index to -1 (indicating empty bids book).
       best_bid_index_(-1),
       // Set the initial best ask index to NUM_LEVELS (indicating empty asks book).
@@ -62,13 +114,13 @@ OrderBook::OrderBook()
 
 // Implement the destructor.
 OrderBook::~OrderBook() {
-    // No raw resources or pointers need manual release since pool_ handles the vector cleanup.
+    // No raw resources or pointers need manual release.
 }
 
 // Process and match an incoming order using O(1) array index retrieval.
-std::vector<Trade> OrderBook::addOrder(Order order) {
-    // Create an output vector to store trade executions.
-    std::vector<Trade> trades;
+TradeVector OrderBook::addOrder(Order order) {
+    // Create our zero-allocation stack trade container.
+    TradeVector trades;
 
     // Check if the order price is outside our pre-allocated bounds.
     if (order.price < MIN_PRICE || order.price > MAX_PRICE) {
@@ -91,7 +143,7 @@ std::vector<Trade> OrderBook::addOrder(Order order) {
 
             // Get a reference to the active best ask price level in the asks array.
             PriceLevel& best_level = asks_levels_[best_ask_index_];
-            // Start iterating from the head of the price queue (earliest time priority).
+            // Start iterating from the head of the price queue.
             Order* resting = best_level.head;
 
             // While we still have incoming quantity and there are resting orders in this price level...
@@ -99,7 +151,7 @@ std::vector<Trade> OrderBook::addOrder(Order order) {
                 // Determine the transaction fill quantity.
                 Qty fill_qty = std::min(order.qty, resting->qty);
 
-                // Add a new Trade execution record (resting order is maker, incoming is taker).
+                // Add a new Trade execution record.
                 trades.emplace_back(resting->id, order.id, best_ask_index_ + MIN_PRICE, fill_qty);
 
                 // Reduce the remaining quantity of the incoming order.
@@ -107,13 +159,15 @@ std::vector<Trade> OrderBook::addOrder(Order order) {
                 // Reduce the remaining quantity of the resting order.
                 resting->qty -= fill_qty;
 
-                // Cache a pointer to the next order in queue before any deletion takes place.
+                // Cache a pointer to the next order in queue before any deletion.
                 Order* next_resting = resting->next;
 
                 // If the resting order has been fully filled (quantity drops to 0)...
                 if (resting->qty == 0) {
                     // Erase its record from the fast cancellation lookup index.
-                    order_index_.erase(resting->id);
+                    if (resting->id < order_index_.size()) {
+                        order_index_[resting->id] = nullptr;
+                    }
                     // Remove it from the doubly-linked queue list.
                     best_level.remove(resting);
                     // Release the Order object block back to the pool.
@@ -128,7 +182,7 @@ std::vector<Trade> OrderBook::addOrder(Order order) {
             if (best_level.head == nullptr) {
                 // Scan upwards to locate the next active ask price level.
                 while (best_ask_index_ < static_cast<int>(NUM_LEVELS) && asks_levels_[best_ask_index_].head == nullptr) {
-                    // Increment the index to look at the next tick level.
+                    // Increment the index.
                     ++best_ask_index_;
                 }
             }
@@ -136,14 +190,20 @@ std::vector<Trade> OrderBook::addOrder(Order order) {
 
         // If the incoming order still has quantity remaining, add it as a resting bid.
         if (order.qty > 0) {
-            // Acquire a clean Order object from our pre-allocated pool.
+            // Acquire a clean Order object from our pool.
             Order* rested = pool_.acquire(order.id, Side::Buy, order.price, order.qty, order.timestamp);
             // Append the pooled order to the back of the queue at its price index level.
             bids_levels_[price_index].push_back(rested);
-            // Save a pointer in the fast cancel map.
+
+            // Check if the order ID exceeds the size of the lookup vector.
+            if (order.id >= order_index_.size()) {
+                // Resize the vector to double the needed size, filling with null pointers.
+                order_index_.resize(order.id * 2, nullptr);
+            }
+            // Save the pointer to the resting order.
             order_index_[order.id] = rested;
 
-            // Update the cached best bid index if this new resting price is higher than current best.
+            // Update the cached best bid index.
             if (price_index > best_bid_index_) {
                 best_bid_index_ = price_index;
             }
@@ -168,7 +228,7 @@ std::vector<Trade> OrderBook::addOrder(Order order) {
                 // Determine the transaction fill quantity.
                 Qty fill_qty = std::min(order.qty, resting->qty);
 
-                // Add a new Trade execution record (resting order is maker, incoming is taker).
+                // Add a new Trade execution record.
                 trades.emplace_back(resting->id, order.id, best_bid_index_ + MIN_PRICE, fill_qty);
 
                 // Reduce the remaining quantity of the incoming order.
@@ -182,7 +242,9 @@ std::vector<Trade> OrderBook::addOrder(Order order) {
                 // If the resting order has been fully filled (quantity drops to 0)...
                 if (resting->qty == 0) {
                     // Erase its record from the fast cancellation lookup index.
-                    order_index_.erase(resting->id);
+                    if (resting->id < order_index_.size()) {
+                        order_index_[resting->id] = nullptr;
+                    }
                     // Remove it from the doubly-linked queue list.
                     best_level.remove(resting);
                     // Release the Order object block back to the pool.
@@ -197,7 +259,7 @@ std::vector<Trade> OrderBook::addOrder(Order order) {
             if (best_level.head == nullptr) {
                 // Scan downwards to locate the next active bid price level.
                 while (best_bid_index_ >= 0 && bids_levels_[best_bid_index_].head == nullptr) {
-                    // Decrement the index to look at the next lower tick level.
+                    // Decrement the index.
                     --best_bid_index_;
                 }
             }
@@ -205,38 +267,47 @@ std::vector<Trade> OrderBook::addOrder(Order order) {
 
         // If the incoming order still has quantity remaining, add it as a resting ask.
         if (order.qty > 0) {
-            // Acquire a clean Order object from our pre-allocated pool.
+            // Acquire a clean Order object from our pool.
             Order* rested = pool_.acquire(order.id, Side::Sell, order.price, order.qty, order.timestamp);
             // Append the pooled order to the back of the queue at its price index level.
             asks_levels_[price_index].push_back(rested);
-            // Save a pointer in the fast cancel map.
+
+            // Check if the order ID exceeds the size of the lookup vector.
+            if (order.id >= order_index_.size()) {
+                // Resize the vector to double the needed size, filling with null pointers.
+                order_index_.resize(order.id * 2, nullptr);
+            }
+            // Save the pointer to the resting order.
             order_index_[order.id] = rested;
 
-            // Update the cached best ask index if this new resting price is lower than current best.
+            // Update the cached best ask index.
             if (price_index < best_ask_index_) {
                 best_ask_index_ = price_index;
             }
         }
     }
 
-    // Return the list of matches.
+    // Return the list of matches (by value, zero heap allocation).
     return trades;
 }
 
 // Cancel an order in O(1) time using intrusive doubly-linked deletion.
 bool OrderBook::cancelOrder(OrderId id) {
-    // Look up the order pointer in our lookup index.
-    auto lookup_it = order_index_.find(id);
-    // If the order ID is not found...
-    if (lookup_it == order_index_.end()) {
-        // Return false indicating cancellation failed.
+    // If the order ID is out of bounds for our lookup index...
+    if (id >= order_index_.size()) {
         return false;
     }
 
     // Retrieve the pointer to the active pooled Order object.
-    Order* o = lookup_it->second;
-    // Erase the ID record from the fast cancel map.
-    order_index_.erase(lookup_it);
+    Order* o = order_index_[id];
+    // If the order pointer is null (not active in the book)...
+    if (o == nullptr) {
+        // Return false.
+        return false;
+    }
+
+    // Reset the lookup index slot for this ID.
+    order_index_[id] = nullptr;
 
     // Get the relative price level index.
     int price_index = o->price - MIN_PRICE;
@@ -273,7 +344,7 @@ bool OrderBook::cancelOrder(OrderId id) {
         }
     }
 
-    // Release the Order object block back to the pool to make it available for future orders.
+    // Release the Order object block back to the pool.
     pool_.release(o);
 
     // Return true to indicate successful cancellation.
@@ -282,63 +353,46 @@ bool OrderBook::cancelOrder(OrderId id) {
 
 // Return true if both sides of the book have no active orders.
 bool OrderBook::empty() const {
-    // Return true if best bid index is negative and best ask index is out of bounds.
     return best_bid_index_ < 0 && best_ask_index_ >= static_cast<int>(NUM_LEVELS);
 }
 
 // Convert bids levels to a sorted map representation for compatibility with unit/differential tests.
 std::map<Price, std::list<Order>, std::greater<Price>> OrderBook::bids() const {
-    // Create an empty sorted map (highest price key first).
+    // Create an empty sorted map.
     std::map<Price, std::list<Order>, std::greater<Price>> result;
     // Iterate from the best bid index down to zero.
     for (int i = best_bid_index_; i >= 0; --i) {
-        // Get the price level reference.
         const PriceLevel& level = bids_levels_[i];
-        // If there are orders at this level...
         if (level.head != nullptr) {
-            // Convert index back to price tick.
             Price price = i + MIN_PRICE;
-            // Create a reference to the target list in the map.
             std::list<Order>& order_list = result[price];
-            // Iterate through the doubly-linked queue.
             Order* current = level.head;
             while (current != nullptr) {
-                // Add a copy of the order to our return list.
                 order_list.push_back(*current);
-                // Move to next order.
                 current = current->next;
             }
         }
     }
-    // Return the sorted map.
     return result;
 }
 
 // Convert asks levels to a sorted map representation for compatibility with unit/differential tests.
 std::map<Price, std::list<Order>> OrderBook::asks() const {
-    // Create an empty sorted map (lowest price key first).
+    // Create an empty sorted map.
     std::map<Price, std::list<Order>> result;
-    // Iterate from the best ask index up to the maximum index boundary.
+    // Iterate from the best ask index up to maximum index boundary.
     for (size_t i = best_ask_index_; i < NUM_LEVELS; ++i) {
-        // Get the price level reference.
         const PriceLevel& level = asks_levels_[i];
-        // If there are orders at this level...
         if (level.head != nullptr) {
-            // Convert index back to price tick.
             Price price = i + MIN_PRICE;
-            // Create a reference to the target list in the map.
             std::list<Order>& order_list = result[price];
-            // Iterate through the doubly-linked queue.
             Order* current = level.head;
             while (current != nullptr) {
-                // Add a copy of the order to our return list.
                 order_list.push_back(*current);
-                // Move to next order.
                 current = current->next;
             }
         }
     }
-    // Return the sorted map.
     return result;
 }
 

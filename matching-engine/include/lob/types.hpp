@@ -1,11 +1,15 @@
-// Guard this header file from being included multiple times in the same compilation unit to avoid duplicate declarations.
+// Guard this header file from being included multiple times to avoid duplicate declarations.
 #ifndef LOB_TYPES_HPP
 #define LOB_TYPES_HPP
 
-// Include standard integer types to guarantee exact byte sizes across compilers and operating systems.
+// Include standard integer types to guarantee exact byte sizes across compilers.
 #include <cstdint>
-// Include the string library to facilitate converting enumerations to human-readable strings.
+// Include string library for conversion helpers.
 #include <string>
+// Include array to construct a fixed-size buffer for trade logs.
+#include <array>
+// Include vector to compare with std::vector in testing.
+#include <vector>
 
 // Keep all our matching engine type definitions grouped together inside the 'lob' namespace.
 namespace lob {
@@ -40,7 +44,6 @@ inline std::string side_to_string(Side side) {
 }
 
 // Define the Trade structure representing execution matches between orders.
-// Placing this in types.hpp prevents duplicate definitions in reference and optimized books.
 struct Trade {
     // The OrderId of the resting order that was already in the book (maker) (8 bytes).
     OrderId maker_id;
@@ -50,6 +53,9 @@ struct Trade {
     Price price;
     // The amount of quantity filled in this match (8 bytes).
     Qty qty;
+
+    // Default constructor.
+    Trade() : maker_id(0), taker_id(0), price(0), qty(0) {}
 
     // Parameterized constructor to initialize trade records.
     Trade(OrderId m_id, OrderId t_id, Price p, Qty q)
@@ -64,6 +70,79 @@ struct Trade {
                qty == other.qty;
     }
 };
+
+// Define a custom, fixed-capacity vector to hold Trade records with zero dynamic heap allocations.
+// This is critical for meeting low-latency requirements since it operates purely on the stack.
+class TradeVector {
+private:
+    // The maximum number of trades we can record from a single incoming order.
+    static constexpr size_t MAX_TRADES = 64;
+    // Stack-allocated array to store the Trade objects.
+    std::array<Trade, MAX_TRADES> data_;
+    // The current number of active trades stored in our array.
+    size_t size_ = 0;
+
+public:
+    // Default constructor.
+    TradeVector() = default;
+
+    // Emplace a new Trade record directly into our array at the current size index.
+    void emplace_back(OrderId maker, OrderId taker, Price p, Qty q) {
+        // Check if we still have available space in our fixed-capacity array.
+        if (size_ < MAX_TRADES) {
+            // Assign the trade details at the current index and increment size.
+            data_[size_++] = Trade(maker, taker, p, q);
+        }
+    }
+
+    // Return the number of active trades.
+    size_t size() const {
+        return size_;
+    }
+
+    // Return true if there are no trades.
+    bool empty() const {
+        return size_ == 0;
+    }
+
+    // Access trade at index (const version).
+    const Trade& operator[](size_t index) const {
+        return data_[index];
+    }
+
+    // Return pointer to the start of the array data (for iteration support).
+    const Trade* begin() const {
+        return &data_[0];
+    }
+
+    // Return pointer to the end of the active data (for iteration support).
+    const Trade* end() const {
+        return &data_[size_];
+    }
+};
+
+// Helper operator to compare standard std::vector<Trade> with our zero-allocation TradeVector.
+// This is required so that differential testing assertions compile and execute correctly.
+inline bool operator==(const std::vector<Trade>& lhs, const TradeVector& rhs) {
+    // If sizes are different, they are not equal.
+    if (lhs.size() != rhs.size()) {
+        return false;
+    }
+    // Loop through each element to compare them.
+    for (size_t i = 0; i < lhs.size(); ++i) {
+        // If any pair is not equal, return false.
+        if (!(lhs[i] == rhs[i])) {
+            return false;
+        }
+    }
+    // All checks passed; they are identical.
+    return true;
+}
+
+// Inequality helper.
+inline bool operator!=(const std::vector<Trade>& lhs, const TradeVector& rhs) {
+    return !(lhs == rhs);
+}
 
 } // namespace lob
 

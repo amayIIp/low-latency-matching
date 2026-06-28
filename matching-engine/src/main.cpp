@@ -134,7 +134,7 @@ int main(int argc, char* argv[]) {
             lob::Order order(id, side, price, qty, sequence_timestamp);
 
             // Feed the order into our matching engine and collect any executed trades
-            std::vector<lob::Trade> trades = book.addOrder(order);
+            auto trades = book.addOrder(order);
 
             // Print each executed trade to the standard output
             for (const auto& trade : trades) {

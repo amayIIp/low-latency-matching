@@ -28,8 +28,8 @@ int main() {
         // Alternately create buy and sell orders using the modulo operator (even indices are Buy, odd are Sell)
         lob::Side side = (index % 2 == 0) ? lob::Side::Buy : lob::Side::Sell;
         
-        // Define a base price and adjust it based on index to simulate various order book price levels
-        lob::Price price = 100 + (index % 10);
+        // Define a base price and adjust it based on index to simulate various order book price levels (centered around 10000 ticks)
+        lob::Price price = 10000 + (index % 10);
         
         // Create a unique sequence timestamp for each order to represent arrival sequence
         uint64_t timestamp = index + 1;
@@ -40,6 +40,11 @@ int main() {
 
     // Print a status update indicating order generation is finished and timing is about to start
     std::cout << "Generated " << num_orders << " mock orders. Starting measurement..." << std::endl;
+
+#ifdef PROVE_ZERO_ALLOC
+    // Disable any future heap memory allocations during the hot benchmark execution to prove the zero-allocation design
+    lob::allocations_forbidden.store(true, std::memory_order_relaxed);
+#endif
 
     // Record the current high-resolution clock timestamp before starting the benchmark loop
     auto start_time = std::chrono::high_resolution_clock::now();
@@ -52,6 +57,11 @@ int main() {
 
     // Record the high-resolution clock timestamp immediately after completing the benchmark loop
     auto end_time = std::chrono::high_resolution_clock::now();
+
+#ifdef PROVE_ZERO_ALLOC
+    // Re-enable memory allocations so that standard outputs and cleanups can execute safely
+    lob::allocations_forbidden.store(false, std::memory_order_relaxed);
+#endif
 
     // Calculate the total duration in microseconds by subtracting the start time from the end time
     auto duration = std::chrono::duration_cast<std::chrono::microseconds>(end_time - start_time).count();

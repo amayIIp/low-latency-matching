@@ -12,8 +12,6 @@
 #include <map>
 // Include list for building test-compatible list copies.
 #include <list>
-// Include unordered_map to maintain fast lookup from OrderId to pooled Order pointer.
-#include <unordered_map>
 
 // Place all our engine declarations inside the 'lob' namespace.
 namespace lob {
@@ -23,7 +21,57 @@ namespace lob {
 extern std::atomic<bool> allocations_forbidden;
 #endif
 
+// Represents a price level queue using intrusive pointers in the Order objects.
+struct PriceLevel {
+    // Pointer to the first order in the queue (highest priority).
+    Order* head = nullptr;
+    // Pointer to the last order in the queue (lowest priority).
+    Order* tail = nullptr;
+    // Total aggregated quantity of all active orders at this price level.
+    Qty total_qty = 0;
 
+    // Append a new order to the back of the queue (FIFO time priority).
+    void push_back(Order* o) {
+        // The new order's prev points to the current tail.
+        o->prev = tail;
+        // The new order's next points to null since it's the last element.
+        o->next = nullptr;
+        // If a tail exists, link its next pointer to the new order.
+        if (tail) {
+            tail->next = o;
+        } else {
+            // If no tail exists, this is the first order; set head to it.
+            head = o;
+        }
+        // Update the tail of the level to the new order.
+        tail = o;
+        // Increase the total volume at this price level.
+        total_qty += o->qty;
+    }
+
+    // Remove an order from this price level queue.
+    void remove(Order* o) {
+        // If this order has a predecessor, link it to this order's successor.
+        if (o->prev) {
+            o->prev->next = o->next;
+        } else {
+            // Otherwise, this order was the head; set head to the successor.
+            head = o->next;
+        }
+        // If this order has a successor, link it to this order's predecessor.
+        if (o->next) {
+            o->next->prev = o->prev;
+        } else {
+            // Otherwise, this order was the tail; set tail to the predecessor.
+            tail = o->prev;
+        }
+        // Decrease the total volume at this price level.
+        total_qty -= o->qty;
+        // Reset the unlinked order's pointers.
+        o->next = nullptr;
+        o->prev = nullptr;
+    }
+};
 
 // Object Pool implementation to allocate all Order structures at startup.
 class OrderPool {
@@ -78,58 +126,6 @@ public:
     }
 };
 
-// Represents a price level queue using intrusive pointers in the Order objects.
-struct PriceLevel {
-    // Pointer to the first order in the queue (highest priority).
-    Order* head = nullptr;
-    // Pointer to the last order in the queue (lowest priority).
-    Order* tail = nullptr;
-    // Total aggregated quantity of all active orders at this price level.
-    Qty total_qty = 0;
-
-    // Append a new order to the back of the queue (FIFO time priority).
-    void push_back(Order* o) {
-        // The new order's prev points to the current tail.
-        o->prev = tail;
-        // The new order's next points to null since it's the last element.
-        o->next = nullptr;
-        // If a tail exists, link its next pointer to the new order.
-        if (tail) {
-            tail->next = o;
-        } else {
-            // If no tail exists, this is the first order; set head to it.
-            head = o;
-        }
-        // Update the tail of the level to the new order.
-        tail = o;
-        // Increase the total volume at this price level.
-        total_qty += o->qty;
-    }
-
-    // Remove an order from this price level queue.
-    void remove(Order* o) {
-        // If this order has a predecessor, link it to this order's successor.
-        if (o->prev) {
-            o->prev->next = o->next;
-        } else {
-            // Otherwise, this order was the head; set head to the successor.
-            head = o->next;
-        }
-        // If this order has a successor, link it to this order's predecessor.
-        if (o->next) {
-            o->next->prev = o->prev;
-        } else {
-            // Otherwise, this order was the tail; set tail to the predecessor.
-            tail = o->prev;
-        }
-        // Decrease the total volume at this price level.
-        total_qty -= o->qty;
-        // Reset the unlinked order's pointers.
-        o->next = nullptr;
-        o->prev = nullptr;
-    }
-};
-
 // Optimized OrderBook class.
 class OrderBook {
 public:
@@ -147,7 +143,8 @@ public:
     ~OrderBook();
 
     // Process a new order using fast array-indexing and object pooling.
-    std::vector<Trade> addOrder(Order order);
+    // Returns our zero-allocation TradeVector container by value.
+    TradeVector addOrder(Order order);
 
     // Cancel an order in O(1) time using intrusive doubly-linked deletion.
     bool cancelOrder(OrderId id);
@@ -170,8 +167,9 @@ private:
     // Fast array-indexed asks levels.
     std::vector<PriceLevel> asks_levels_;
 
-    // Fast lookup index mapping OrderId to active Order pointer.
-    std::unordered_map<OrderId, Order*> order_index_;
+    // Pre-allocated vector mapping OrderId to active Order pointer.
+    // This replaces std::unordered_map to guarantee zero runtime heap allocations.
+    std::vector<Order*> order_index_;
 
     // Cached best bid price index (represented as price - MIN_PRICE).
     // Initialized to -1 when empty.

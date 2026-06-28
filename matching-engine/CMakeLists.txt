@@ -11,6 +11,9 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Disable compiler-specific extensions (like GNU extensions) to maintain standard compliance
 set(CMAKE_CXX_EXTENSIONS OFF)
 
+# Enable the zero-allocation proof mechanism globally for both tests and benchmarks
+add_compile_definitions(PROVE_ZERO_ALLOC)
+
 # Check if a build type is specified; if not, default to 'Release' for optimal performance
 if(NOT CMAKE_BUILD_TYPE AND NOT CMAKE_CONFIGURATION_TYPES)
   # Set the default build type to Release in the CMake cache
