@@ -1,14 +1,16 @@
-// Guard this header file from being included multiple times to avoid duplicate definitions.
+// Guard this header file from being included multiple times to avoid duplicate definition errors.
 #ifndef LOB_ORDER_HPP
 #define LOB_ORDER_HPP
 
-// Include core types definitions to use OrderId, Price, Qty, and Side within our Order struct.
+// Include core types to define Order fields.
 #include "types.hpp"
 
-// Place all our code in the 'lob' namespace to stay organized.
+// Place all structures within the 'lob' namespace.
 namespace lob {
 
-// Define the Order struct representing an active request in our matching engine.
+// Define the Order structure. It now contains intrusive pointers next and prev.
+// This allows us to link Order objects directly into doubly-linked queues and object pools
+// without allocating external memory blocks.
 struct Order {
     // Unique ID identifying the order (8 bytes).
     OrderId id;
@@ -16,26 +18,34 @@ struct Order {
     // Trade side: Buy or Sell (1 byte).
     Side side;
     
-    // Price limit representing the boundary of execution (8 bytes).
+    // Price limit (8 bytes).
     Price price;
     
-    // Remaining quantity of the order that has not yet been matched/filled (8 bytes).
+    // Remaining quantity of the order (8 bytes).
     Qty qty;
     
-    // Time priority field represented as an incrementing sequence counter (8 bytes).
+    // Time priority sequence number (8 bytes).
     uint64_t timestamp;
 
-    // Default constructor: Initializes member variables to zero and Side::Buy.
+    // Intrusive pointer to the next Order element (8 bytes).
+    // Used for the free list in the Object Pool and for FIFO queues at each price level.
+    Order* next = nullptr;
+
+    // Intrusive pointer to the previous Order element (8 bytes).
+    // Used to build doubly-linked lists at each price level for fast unlinking.
+    Order* prev = nullptr;
+
+    // Default constructor: Initializes member variables to zero/null.
     Order()
-        : id(0), side(Side::Buy), price(0), qty(0), timestamp(0) {} // Assign initial zero values to all fields
+        : id(0), side(Side::Buy), price(0), qty(0), timestamp(0), next(nullptr), prev(nullptr) {} // Set all values to default state
 
     // Parameterized constructor: Constructs an order with specific attributes.
     Order(OrderId o_id, Side o_side, Price o_price, Qty o_qty, uint64_t o_ts)
-        : id(o_id), side(o_side), price(o_price), qty(o_qty), timestamp(o_ts) {} // Assign parameters to their respective class properties
+        : id(o_id), side(o_side), price(o_price), qty(o_qty), timestamp(o_ts), next(nullptr), prev(nullptr) {} // Initialize fields
 
-    // Comparison operator to check if two Order objects are identical. This is needed for unit testing and differential testing.
+    // Comparison operator to check if two Order objects are identical. Used in unit and differential tests.
     bool operator==(const Order& other) const {
-        // Compare each field to determine equality, returning true only if all fields match.
+        // Return true only if all essential fields are identical.
         return id == other.id &&
                side == other.side &&
                price == other.price &&

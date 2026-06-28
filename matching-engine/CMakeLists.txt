@@ -57,7 +57,7 @@ enable_testing()
 FetchContent_MakeAvailable(googletest)
 
 # Define our static library target 'lob_lib' containing the implementation of our limit order book
-add_library(lob_lib src/order_book.cpp)
+add_library(lob_lib src/order_book.cpp src/reference_order_book.cpp)
 
 # Specify the include directories for the 'lob_lib' target. PUBLIC makes it accessible to libraries linking to it
 target_include_directories(lob_lib PUBLIC include)

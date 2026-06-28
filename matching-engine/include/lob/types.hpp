@@ -39,6 +39,32 @@ inline std::string side_to_string(Side side) {
     }
 }
 
+// Define the Trade structure representing execution matches between orders.
+// Placing this in types.hpp prevents duplicate definitions in reference and optimized books.
+struct Trade {
+    // The OrderId of the resting order that was already in the book (maker) (8 bytes).
+    OrderId maker_id;
+    // The OrderId of the incoming order that triggered the match (taker) (8 bytes).
+    OrderId taker_id;
+    // The price at which the match occurred (8 bytes).
+    Price price;
+    // The amount of quantity filled in this match (8 bytes).
+    Qty qty;
+
+    // Parameterized constructor to initialize trade records.
+    Trade(OrderId m_id, OrderId t_id, Price p, Qty q)
+        : maker_id(m_id), taker_id(t_id), price(p), qty(q) {} // Assign input parameters
+
+    // Comparison operator to check if two Trade objects are identical. Required for testing checks.
+    bool operator==(const Trade& other) const {
+        // Return true only if all fields of the trade match exactly.
+        return maker_id == other.maker_id &&
+               taker_id == other.taker_id &&
+               price == other.price &&
+               qty == other.qty;
+    }
+};
+
 } // namespace lob
 
 // End of the header guard condition
