@@ -117,177 +117,195 @@ OrderBook::~OrderBook() {
     // No raw resources or pointers need manual release.
 }
 
-// Process and match an incoming order using O(1) array index retrieval.
+// Process and match an incoming order using side-specialized helper functions.
 TradeVector OrderBook::addOrder(Order order) {
-    // Create our zero-allocation stack trade container.
-    TradeVector trades;
-
     // Check if the order price is outside our pre-allocated bounds.
     if (order.price < MIN_PRICE || order.price > MAX_PRICE) {
-        // Reject the order immediately by returning no trades.
-        return trades;
+        // Return an empty trade list immediately.
+        return TradeVector();
     }
 
+    // Delegate matching logic depending on the order side.
+    if (order.side == Side::Buy) {
+        // Execute buy specialized match loop.
+        return addBuyOrder(order);
+    } else {
+        // Execute sell specialized match loop.
+        return addSellOrder(order);
+    }
+}
+
+// Implement buy-specialized matching function to avoid side branching inside loop.
+__attribute__((always_inline)) inline TradeVector OrderBook::addBuyOrder(Order order) {
+    // Zero-allocation stack trade container.
+    TradeVector trades;
     // Convert the price tick to a relative array index.
     int price_index = order.price - MIN_PRICE;
 
-    // If the order is a Buy...
-    if (order.side == Side::Buy) {
-        // While the incoming Buy order has remaining quantity and the asks side is not empty...
-        while (order.qty > 0 && best_ask_index_ < static_cast<int>(NUM_LEVELS)) {
-            // Check if the incoming Buy price index is lower than the best Ask price index (no price cross).
-            if (price_index < best_ask_index_) {
-                // Stop matching; no further matches are possible.
-                break;
-            }
-
-            // Get a reference to the active best ask price level in the asks array.
-            PriceLevel& best_level = asks_levels_[best_ask_index_];
-            // Start iterating from the head of the price queue.
-            Order* resting = best_level.head;
-
-            // While we still have incoming quantity and there are resting orders in this price level...
-            while (order.qty > 0 && resting != nullptr) {
-                // Determine the transaction fill quantity.
-                Qty fill_qty = std::min(order.qty, resting->qty);
-
-                // Add a new Trade execution record.
-                trades.emplace_back(resting->id, order.id, best_ask_index_ + MIN_PRICE, fill_qty);
-
-                // Reduce the remaining quantity of the incoming order.
-                order.qty -= fill_qty;
-                // Reduce the remaining quantity of the resting order.
-                resting->qty -= fill_qty;
-
-                // Cache a pointer to the next order in queue before any deletion.
-                Order* next_resting = resting->next;
-
-                // If the resting order has been fully filled (quantity drops to 0)...
-                if (resting->qty == 0) {
-                    // Erase its record from the fast cancellation lookup index.
-                    if (resting->id < order_index_.size()) {
-                        order_index_[resting->id] = nullptr;
-                    }
-                    // Remove it from the doubly-linked queue list.
-                    best_level.remove(resting);
-                    // Release the Order object block back to the pool.
-                    pool_.release(resting);
-                }
-
-                // Advance to the next order in the price level queue.
-                resting = next_resting;
-            }
-
-            // If the best ask price level is now completely empty of orders...
-            if (best_level.head == nullptr) {
-                // Scan upwards to locate the next active ask price level.
-                while (best_ask_index_ < static_cast<int>(NUM_LEVELS) && asks_levels_[best_ask_index_].head == nullptr) {
-                    // Increment the index.
-                    ++best_ask_index_;
-                }
-            }
+    // While the incoming Buy order has remaining quantity and the asks side is not empty...
+    while (order.qty > 0 && best_ask_index_ < static_cast<int>(NUM_LEVELS)) {
+        // Check if the incoming Buy price index is lower than the best Ask price index (no price cross).
+        if (price_index < best_ask_index_) {
+            // Stop matching; no further matches are possible.
+            break;
         }
 
-        // If the incoming order still has quantity remaining, add it as a resting bid.
-        if (order.qty > 0) {
-            // Acquire a clean Order object from our pool.
-            Order* rested = pool_.acquire(order.id, Side::Buy, order.price, order.qty, order.timestamp);
-            // Append the pooled order to the back of the queue at its price index level.
-            bids_levels_[price_index].push_back(rested);
+        // Get a reference to the active best ask price level in the asks array.
+        PriceLevel& best_level = asks_levels_[best_ask_index_];
+        // Start iterating from the head of the price queue.
+        Order* resting = best_level.head;
 
-            // Check if the order ID exceeds the size of the lookup vector.
-            if (order.id >= order_index_.size()) {
-                // Resize the vector to double the needed size, filling with null pointers.
-                order_index_.resize(order.id * 2, nullptr);
-            }
-            // Save the pointer to the resting order.
-            order_index_[order.id] = rested;
+        // While we still have incoming quantity and there are resting orders in this price level...
+        while (order.qty > 0 && resting != nullptr) {
+            // Determine the transaction fill quantity.
+            Qty fill_qty = std::min(order.qty, resting->qty);
 
-            // Update the cached best bid index.
-            if (price_index > best_bid_index_) {
-                best_bid_index_ = price_index;
-            }
-        }
-    } else {
-        // If the order is a Sell...
-        // While the incoming Sell order has remaining quantity and the bids side is not empty...
-        while (order.qty > 0 && best_bid_index_ >= 0) {
-            // Check if the incoming Sell price index is higher than the best Bid price index (no price cross).
-            if (price_index > best_bid_index_) {
-                // Stop matching; no further matches are possible.
-                break;
-            }
+            // Add a new Trade execution record.
+            trades.emplace_back(resting->id, order.id, best_ask_index_ + MIN_PRICE, fill_qty);
 
-            // Get a reference to the active best bid price level in the bids array.
-            PriceLevel& best_level = bids_levels_[best_bid_index_];
-            // Start iterating from the head of the price queue.
-            Order* resting = best_level.head;
+            // Reduce the remaining quantity of the incoming order.
+            order.qty -= fill_qty;
+            // Reduce the remaining quantity of the resting order.
+            resting->qty -= fill_qty;
 
-            // While we still have incoming quantity and there are resting orders in this price level...
-            while (order.qty > 0 && resting != nullptr) {
-                // Determine the transaction fill quantity.
-                Qty fill_qty = std::min(order.qty, resting->qty);
+            // Cache a pointer to the next order in queue before any deletion.
+            Order* next_resting = resting->next;
 
-                // Add a new Trade execution record.
-                trades.emplace_back(resting->id, order.id, best_bid_index_ + MIN_PRICE, fill_qty);
-
-                // Reduce the remaining quantity of the incoming order.
-                order.qty -= fill_qty;
-                // Reduce the remaining quantity of the resting order.
-                resting->qty -= fill_qty;
-
-                // Cache a pointer to the next order in queue before any deletion.
-                Order* next_resting = resting->next;
-
-                // If the resting order has been fully filled (quantity drops to 0)...
-                if (resting->qty == 0) {
-                    // Erase its record from the fast cancellation lookup index.
-                    if (resting->id < order_index_.size()) {
-                        order_index_[resting->id] = nullptr;
-                    }
-                    // Remove it from the doubly-linked queue list.
-                    best_level.remove(resting);
-                    // Release the Order object block back to the pool.
-                    pool_.release(resting);
+            // If the resting order has been fully filled (quantity drops to 0)...
+            if (resting->qty == 0) {
+                // Erase its record from the fast cancellation lookup index.
+                if (resting->id < order_index_.size()) {
+                    order_index_[resting->id] = nullptr;
                 }
-
-                // Advance to the next order in the price level queue.
-                resting = next_resting;
+                // Remove it from the doubly-linked queue list.
+                best_level.remove(resting);
+                // Release the Order object block back to the pool.
+                pool_.release(resting);
             }
 
-            // If the best bid price level is now completely empty of orders...
-            if (best_level.head == nullptr) {
-                // Scan downwards to locate the next active bid price level.
-                while (best_bid_index_ >= 0 && bids_levels_[best_bid_index_].head == nullptr) {
-                    // Decrement the index.
-                    --best_bid_index_;
-                }
-            }
+            // Advance to the next order in the price level queue.
+            resting = next_resting;
         }
 
-        // If the incoming order still has quantity remaining, add it as a resting ask.
-        if (order.qty > 0) {
-            // Acquire a clean Order object from our pool.
-            Order* rested = pool_.acquire(order.id, Side::Sell, order.price, order.qty, order.timestamp);
-            // Append the pooled order to the back of the queue at its price index level.
-            asks_levels_[price_index].push_back(rested);
-
-            // Check if the order ID exceeds the size of the lookup vector.
-            if (order.id >= order_index_.size()) {
-                // Resize the vector to double the needed size, filling with null pointers.
-                order_index_.resize(order.id * 2, nullptr);
-            }
-            // Save the pointer to the resting order.
-            order_index_[order.id] = rested;
-
-            // Update the cached best ask index.
-            if (price_index < best_ask_index_) {
-                best_ask_index_ = price_index;
+        // If the best ask price level is now completely empty of orders...
+        if (best_level.head == nullptr) {
+            // Scan upwards to locate the next active ask price level.
+            while (best_ask_index_ < static_cast<int>(NUM_LEVELS) && asks_levels_[best_ask_index_].head == nullptr) {
+                // Increment the index.
+                ++best_ask_index_;
             }
         }
     }
 
-    // Return the list of matches (by value, zero heap allocation).
+    // If the incoming order still has quantity remaining, add it as a resting bid.
+    if (order.qty > 0) {
+        // Acquire a clean Order object from our pool.
+        Order* rested = pool_.acquire(order.id, Side::Buy, order.price, order.qty, order.timestamp);
+        // Append the pooled order to the back of the queue at its price index level.
+        bids_levels_[price_index].push_back(rested);
+
+        // Check if the order ID exceeds the size of the lookup vector.
+        if (order.id >= order_index_.size()) {
+            // Resize the vector to double the needed size.
+            order_index_.resize(order.id * 2, nullptr);
+        }
+        // Save the pointer to the resting order.
+        order_index_[order.id] = rested;
+
+        // Update the cached best bid index.
+        if (price_index > best_bid_index_) {
+            best_bid_index_ = price_index;
+        }
+    }
+
+    // Return trades by value.
+    return trades;
+}
+
+// Implement sell-specialized matching function to avoid side branching inside loop.
+__attribute__((always_inline)) inline TradeVector OrderBook::addSellOrder(Order order) {
+    // Zero-allocation stack trade container.
+    TradeVector trades;
+    // Convert the price tick to a relative array index.
+    int price_index = order.price - MIN_PRICE;
+
+    // While the incoming Sell order has remaining quantity and the bids side is not empty...
+    while (order.qty > 0 && best_bid_index_ >= 0) {
+        // Check if the incoming Sell price index is higher than the best Bid price index (no price cross).
+        if (price_index > best_bid_index_) {
+            // Stop matching; no further matches are possible.
+            break;
+        }
+
+        // Get a reference to the active best bid price level in the bids array.
+        PriceLevel& best_level = bids_levels_[best_bid_index_];
+        // Start iterating from the head of the price queue.
+        Order* resting = best_level.head;
+
+        // While we still have incoming quantity and there are resting orders in this price level...
+        while (order.qty > 0 && resting != nullptr) {
+            // Determine the transaction fill quantity.
+            Qty fill_qty = std::min(order.qty, resting->qty);
+
+            // Add a new Trade execution record.
+            trades.emplace_back(resting->id, order.id, best_bid_index_ + MIN_PRICE, fill_qty);
+
+            // Reduce the remaining quantity of the incoming order.
+            order.qty -= fill_qty;
+            // Reduce the remaining quantity of the resting order.
+            resting->qty -= fill_qty;
+
+            // Cache a pointer to the next order in queue before any deletion.
+            Order* next_resting = resting->next;
+
+            // If the resting order has been fully filled (quantity drops to 0)...
+            if (resting->qty == 0) {
+                // Erase its record from the fast cancellation lookup index.
+                if (resting->id < order_index_.size()) {
+                    order_index_[resting->id] = nullptr;
+                }
+                // Remove it from the doubly-linked queue list.
+                best_level.remove(resting);
+                // Release the Order object block back to the pool.
+                pool_.release(resting);
+            }
+
+            // Advance to the next order in the price level queue.
+            resting = next_resting;
+        }
+
+        // If the best bid price level is now completely empty of orders...
+        if (best_level.head == nullptr) {
+            // Scan downwards to locate the next active bid price level.
+            while (best_bid_index_ >= 0 && bids_levels_[best_bid_index_].head == nullptr) {
+                // Decrement the index.
+                --best_bid_index_;
+            }
+        }
+    }
+
+    // If the incoming order still has quantity remaining, add it as a resting ask.
+    if (order.qty > 0) {
+        // Acquire a clean Order object from our pool.
+        Order* rested = pool_.acquire(order.id, Side::Sell, order.price, order.qty, order.timestamp);
+        // Append the pooled order to the back of the queue at its price index level.
+        asks_levels_[price_index].push_back(rested);
+
+        // Check if the order ID exceeds the size of the lookup vector.
+        if (order.id >= order_index_.size()) {
+            // Resize the vector to double the needed size.
+            order_index_.resize(order.id * 2, nullptr);
+        }
+        // Save the pointer to the resting order.
+        order_index_[order.id] = rested;
+
+        // Update the cached best ask index.
+        if (price_index < best_ask_index_) {
+            best_ask_index_ = price_index;
+        }
+    }
+
+    // Return trades by value.
     return trades;
 }
 

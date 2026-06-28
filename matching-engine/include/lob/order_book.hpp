@@ -178,6 +178,10 @@ private:
     // Cached best ask price index (represented as price - MIN_PRICE).
     // Initialized to NUM_LEVELS when empty.
     int best_ask_index_ = NUM_LEVELS;
+
+    // Helper functions to specialize matching logic per side and eliminate branch checks.
+    __attribute__((always_inline)) inline TradeVector addBuyOrder(Order order);
+    __attribute__((always_inline)) inline TradeVector addSellOrder(Order order);
 };
 
 } // namespace lob
