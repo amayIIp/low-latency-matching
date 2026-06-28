@@ -1,6 +1,8 @@
 # Low-Latency Limit Order Book (LOB) Matching Engine
 
-A C++20 low-latency Limit Order Book (LOB) matching engine designed for high-frequency trading (HFT) performance.
+**Status: Phase 0 complete**
+
+A C++20 low-latency Limit Order Book (LOB) matching engine designed for high-frequency trading (HFT) performance. This project implements an ultra-fast order book that supports add, cancel, and modify operations with nanosecond-level execution latency. The system features a modular architecture, comprehensive unit tests using GoogleTest, and memory/thread safety sanitizers to ensure maximum reliability and correctness under extreme load.
 
 ## Project Structure
 
