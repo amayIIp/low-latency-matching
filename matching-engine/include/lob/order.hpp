@@ -32,6 +32,16 @@ struct Order {
     // Parameterized constructor: Constructs an order with specific attributes.
     Order(OrderId o_id, Side o_side, Price o_price, Qty o_qty, uint64_t o_ts)
         : id(o_id), side(o_side), price(o_price), qty(o_qty), timestamp(o_ts) {} // Assign parameters to their respective class properties
+
+    // Comparison operator to check if two Order objects are identical. This is needed for unit testing and differential testing.
+    bool operator==(const Order& other) const {
+        // Compare each field to determine equality, returning true only if all fields match.
+        return id == other.id &&
+               side == other.side &&
+               price == other.price &&
+               qty == other.qty &&
+               timestamp == other.timestamp;
+    }
 };
 
 } // namespace lob

@@ -30,6 +30,15 @@ struct Trade {
     // Parameterized constructor to initialize trade records.
     Trade(OrderId m_id, OrderId t_id, Price p, Qty q)
         : maker_id(m_id), taker_id(t_id), price(p), qty(q) {} // Assign input parameters to corresponding member fields
+
+    // Comparison operator to check if two Trade objects are identical. Required for testing expectations in GoogleTest.
+    bool operator==(const Trade& other) const {
+        // Compare each field of the trade structure, returning true only if all fields match.
+        return maker_id == other.maker_id &&
+               taker_id == other.taker_id &&
+               price == other.price &&
+               qty == other.qty;
+    }
 };
 
 // Define the structure representing the location of an order in the book.
