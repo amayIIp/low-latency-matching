@@ -1,0 +1,4 @@
+# Ignore the tools directory which contains downloaded binaries (like CMake) that do not belong in source control
+tools/
+# Ignore the build directory where compiled objects and executables will be placed by CMake
+build/
