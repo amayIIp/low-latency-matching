@@ -1,39 +1,40 @@
-// Guard this header file from being included multiple times to avoid compilation errors due to duplicate definitions.
+// Guard this header file from being included multiple times to avoid duplicate definitions.
 #ifndef LOB_ORDER_HPP
 #define LOB_ORDER_HPP
 
-// Include our custom types definition (Price, Qty, Side, OrderId) so we can define the structure properties.
+// Include core types definitions to use OrderId, Price, Qty, and Side within our Order struct.
 #include "types.hpp"
 
-// Place all code inside the 'lob' namespace to group it and prevent name clashes with other systems.
+// Place all our code in the 'lob' namespace to stay organized.
 namespace lob {
 
-// Define a structure to represent a single customer order in our matching engine.
-// In high-frequency trading, keep structures compact and clean to maximize CPU cache efficiency (preventing cache misses).
+// Define the Order struct representing an active request in our matching engine.
 struct Order {
-    // The unique identifier assigned to this specific order (8 bytes).
+    // Unique ID identifying the order (8 bytes).
     OrderId id;
     
-    // The price limit at which the order should be executed (8 bytes).
+    // Trade side: Buy or Sell (1 byte).
+    Side side;
+    
+    // Price limit representing the boundary of execution (8 bytes).
     Price price;
     
-    // The number of shares/contracts requested in this order (8 bytes).
+    // Remaining quantity of the order that has not yet been matched/filled (8 bytes).
     Qty qty;
     
-    // The direction of the order: Buy or Sell (1 byte).
-    Side side;
+    // Time priority field represented as an incrementing sequence counter (8 bytes).
+    uint64_t timestamp;
 
-    // Default constructor: Initializes a blank order with zeros and default side Buy.
-    // This allows us to instantiate empty Order objects in arrays or maps.
-    Order() 
-        : id(0), price(0), qty(0), side(Side::Buy) {} // Set each member variable to its initial zero/default state
+    // Default constructor: Initializes member variables to zero and Side::Buy.
+    Order()
+        : id(0), side(Side::Buy), price(0), qty(0), timestamp(0) {} // Assign initial zero values to all fields
 
-    // Parameterized constructor: Conveniently construct an order with specific attributes.
-    Order(OrderId order_id, Price order_price, Qty order_qty, Side order_side)
-        : id(order_id), price(order_price), qty(order_qty), side(order_side) {} // Assign input parameters to corresponding member fields
+    // Parameterized constructor: Constructs an order with specific attributes.
+    Order(OrderId o_id, Side o_side, Price o_price, Qty o_qty, uint64_t o_ts)
+        : id(o_id), side(o_side), price(o_price), qty(o_qty), timestamp(o_ts) {} // Assign parameters to their respective class properties
 };
 
 } // namespace lob
 
-// End of the header guard condition
+// End of header guard condition
 #endif // LOB_ORDER_HPP

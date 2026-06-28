@@ -31,8 +31,11 @@ int main() {
         // Define a base price and adjust it based on index to simulate various order book price levels
         lob::Price price = 100 + (index % 10);
         
-        // Add the newly constructed order object to our vector (ID is index + 1, quantity is fixed at 10)
-        test_orders.emplace_back(index + 1, price, 10, side);
+        // Create a unique sequence timestamp for each order to represent arrival sequence
+        uint64_t timestamp = index + 1;
+        
+        // Add the newly constructed order object to our vector (ID is index + 1, side, price, quantity 10, timestamp)
+        test_orders.emplace_back(index + 1, side, price, 10, timestamp);
     }
 
     // Print a status update indicating order generation is finished and timing is about to start
@@ -43,8 +46,8 @@ int main() {
 
     // Loop through each order in our pre-allocated vector
     for (const auto& order : test_orders) {
-        // Insert the order into the book and run the skeleton matching code
-        book.add_order(order);
+        // Insert the order into the book and run the matching code
+        book.addOrder(order);
     }
 
     // Record the high-resolution clock timestamp immediately after completing the benchmark loop

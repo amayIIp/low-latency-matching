@@ -1,74 +1,88 @@
-// Guard this header file from being included multiple times to avoid duplicate definitions during compilation.
+// Guard this header file from being included multiple times to avoid duplicate definitions.
 #ifndef LOB_ORDER_BOOK_HPP
 #define LOB_ORDER_BOOK_HPP
 
-// Include the order definition header so that the OrderBook can manage Order instances.
+// Include the order definition header so that we can manage Order objects.
 #include "order.hpp"
-// Include the standard vector library to support lists of order events or trades.
-#include <vector>
-// Include standard map library to store price levels ordered by price.
+// Include the standard list header to store queues of orders at each price level with O(1) insertion/deletion.
+#include <list>
+// Include the standard map header to sort price levels.
 #include <map>
-// Include standard unordered_map library to quickly look up orders by their unique ID in constant time.
+// Include the standard unordered_map header for constant-time order lookups.
 #include <unordered_map>
+// Include the standard vector header to return lists of executed trades.
+#include <vector>
 
-// Place the OrderBook class in the 'lob' namespace to stay consistent with other engine components.
+// Place all classes inside the 'lob' namespace.
 namespace lob {
 
-// Define a structure to represent a trade execution that occurs when a Buy and Sell order match.
+// Define the Trade structure representing an execution match between two orders.
 struct Trade {
-    // The OrderId of the incoming/maker order that got matched.
+    // The OrderId of the resting order that was already in the book (maker) (8 bytes).
     OrderId maker_id;
-    // The OrderId of the outgoing/taker order that triggered the match.
+    // The OrderId of the incoming order that triggered the match (taker) (8 bytes).
     OrderId taker_id;
-    // The execution price where the trade occurred.
+    // The price at which the match occurred (8 bytes).
     Price price;
-    // The quantity filled/exchanged in this trade.
+    // The amount of quantity filled in this match (8 bytes).
     Qty qty;
 
-    // Constructor to initialize all trade details at once.
+    // Parameterized constructor to initialize trade records.
     Trade(OrderId m_id, OrderId t_id, Price p, Qty q)
         : maker_id(m_id), taker_id(t_id), price(p), qty(q) {} // Assign input parameters to corresponding member fields
 };
 
-// Define the main OrderBook class responsible for matching bids (buys) and asks (sells).
+// Define the structure representing the location of an order in the book.
+// Storing an iterator to the std::list allows us to achieve O(1) order cancellation.
+struct OrderLocation {
+    // The side of the order (Buy or Sell).
+    Side side;
+    // The price level of the order.
+    Price price;
+    // The iterator pointing to the specific Order element in the std::list at that price level.
+    std::list<Order>::iterator list_it;
+};
+
+// Define the main OrderBook class to implement core matching engine operations.
 class OrderBook {
 public:
     // Constructor to initialize an empty order book.
     OrderBook();
 
-    // Destructor to clean up resources when the order book is destroyed.
+    // Destructor to clean up resources.
     ~OrderBook();
 
-    // Process and add a new order to the book, returning any trades that resulted from matching.
-    std::vector<Trade> add_order(const Order& order);
+    // Processes a new order: matches it against the opposite side, generates trades, and rests any unfilled quantity.
+    std::vector<Trade> addOrder(Order order);
 
-    // Cancel/remove an existing order from the book by its unique ID. Returns true if found and removed.
-    bool cancel_order(OrderId order_id);
+    // Cancels an order by its unique ID in O(1) time using the location lookup index.
+    bool cancelOrder(OrderId id);
 
-    // Check if the order book is empty on both bids and asks sides.
+    // Returns true if there are no active bids or asks in the book.
     bool empty() const;
 
+    // Helper method to retrieve bids map (used for unit tests and printing book state).
+    const std::map<Price, std::list<Order>, std::greater<Price>>& bids() const {
+        return bids_;
+    }
+
+    // Helper method to retrieve asks map (used for unit tests and printing book state).
+    const std::map<Price, std::list<Order>>& asks() const {
+        return asks_;
+    }
+
 private:
-    // Define a custom comparator to sort bids in descending order (highest price first, since buyers want high prices).
-    struct BidComp {
-        // Overload the call operator to compare two prices.
-        bool operator()(const Price& a, const Price& b) const {
-            // Return true if price a is greater than price b to sort highest to lowest.
-            return a > b;
-        }
-    };
+    // Bids storage: Maps a price to a list of Orders. std::greater<Price> ensures highest bid is at bids_.begin().
+    std::map<Price, std::list<Order>, std::greater<Price>> bids_;
 
-    // Bids storage: Maps a price to a list (vector) of Orders at that price level, sorted descending.
-    std::map<Price, std::vector<Order>, BidComp> bids_;
+    // Asks storage: Maps a price to a list of Orders. Default std::less<Price> ensures lowest ask is at asks_.begin().
+    std::map<Price, std::list<Order>> asks_;
 
-    // Asks storage: Maps a price to a list (vector) of Orders at that price level, sorted ascending (lowest price first, since sellers want low prices).
-    std::map<Price, std::vector<Order>> asks_;
-
-    // Order lookup: Fast hash map mapping an OrderId to its current active order data for constant-time lookups.
-    std::unordered_map<OrderId, Order> order_map_;
+    // Fast order location index: Maps OrderId to OrderLocation for O(1) lookup during cancellation.
+    std::unordered_map<OrderId, OrderLocation> order_index_;
 };
 
 } // namespace lob
 
-// End of the header guard condition
+// End of header guard condition
 #endif // LOB_ORDER_BOOK_HPP

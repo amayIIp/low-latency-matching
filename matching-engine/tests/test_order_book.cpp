@@ -14,11 +14,11 @@ TEST(OrderBookTests, TestAddOrder) {
     // Create an instance of the OrderBook to test
     lob::OrderBook book;
 
-    // Construct a sample buy order with ID 10, price 500, quantity 20, and Side Buy
-    lob::Order order(10, 500, 20, lob::Side::Buy);
+    // Construct a sample buy order with ID 10, Side Buy, Price 500, quantity 20, and timestamp 1
+    lob::Order order(10, lob::Side::Buy, 500, 20, 1);
 
     // Add the order to the book and capture any returned trade executions
-    auto trades = book.add_order(order);
+    auto trades = book.addOrder(order);
 
     // Verify that the trades list is empty since there are no matching ask orders in the book
     EXPECT_TRUE(trades.empty());
@@ -32,14 +32,14 @@ TEST(OrderBookTests, TestCancelOrder) {
     // Create an instance of the OrderBook to test
     lob::OrderBook book;
 
-    // Construct a sample sell order with ID 11, price 510, quantity 15, and Side Sell
-    lob::Order order(11, 510, 15, lob::Side::Sell);
+    // Construct a sample sell order with ID 11, Side Sell, Price 510, quantity 15, and timestamp 2
+    lob::Order order(11, lob::Side::Sell, 510, 15, 2);
 
     // Add the order to the book
-    book.add_order(order);
+    book.addOrder(order);
 
     // Cancel the order using its ID (11) and store the status result
-    bool cancel_result = book.cancel_order(11);
+    bool cancel_result = book.cancelOrder(11);
 
     // Verify that the cancellation succeeded (returned true)
     EXPECT_TRUE(cancel_result);
@@ -48,7 +48,7 @@ TEST(OrderBookTests, TestCancelOrder) {
     EXPECT_TRUE(book.empty());
 
     // Attempt to cancel the same order again to verify it handles duplicate cancels safely
-    bool cancel_again_result = book.cancel_order(11);
+    bool cancel_again_result = book.cancelOrder(11);
 
     // Verify that the second cancellation attempt failed (returned false)
     EXPECT_FALSE(cancel_again_result);

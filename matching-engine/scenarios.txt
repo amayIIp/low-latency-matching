@@ -1,0 +1,68 @@
+# Scenario 1: Basic Buy Order Resting (no trade yet, just goes to bids)
+ADD,1,BUY,100,10
+
+# Scenario 2: Basic Sell Order Resting (no trade yet, spreads bids and asks by 1 tick)
+ADD,2,SELL,101,15
+
+# Scenario 3: Exact price match, partial fill of resting buy order (ID 1)
+# Incoming Sell at 100 for 5 units. It should match with resting Buy 1 at 100 for 5 units.
+# Expected Output: TRADE,maker_id=1,taker_id=3,price=100,qty=5
+ADD,3,SELL,100,5
+
+# Scenario 4: Complete fill of remaining resting buy order (ID 1)
+# Remaining qty of Buy 1 is 5. Incoming Sell 4 at 100 for 5 units.
+# Expected Output: TRADE,maker_id=1,taker_id=4,price=100,qty=5
+ADD,4,SELL,100,5
+
+# Scenario 5: Buy crosses two ask levels
+# Rest two sell orders first: Ask 5 at 102 (qty 10), Ask 6 at 103 (qty 10).
+ADD,5,SELL,102,10
+ADD,6,SELL,103,10
+# Incoming Buy 7 at 104 (qty 15). It crosses 102 and 103.
+# Expected Output: 
+#   TRADE,maker_id=5,taker_id=7,price=102,qty=10
+#   TRADE,maker_id=6,taker_id=7,price=103,qty=5
+ADD,7,BUY,104,15
+
+# Scenario 6: Sell crosses two bid levels
+# Rest two buy orders first: Bid 8 at 98 (qty 10), Bid 9 at 97 (qty 10).
+ADD,8,BUY,98,10
+ADD,9,BUY,97,10
+# Incoming Sell 10 at 96 (qty 15). It crosses 98 and 97.
+# Expected Output:
+#   TRADE,maker_id=8,taker_id=10,price=98,qty=10
+#   TRADE,maker_id=9,taker_id=10,price=97,qty=5
+ADD,10,SELL,96,15
+
+# Scenario 7: Cancel order mid-book
+# Rest two buy orders at the same price: Bid 11 at 95 (qty 10), Bid 12 at 95 (qty 20).
+ADD,11,BUY,95,10
+ADD,12,BUY,95,20
+# Cancel the first one (ID 11).
+CANCEL,11
+# Incoming Sell 13 at 95 (qty 15). It should match ONLY with Bid 12.
+# Expected Output: TRADE,maker_id=12,taker_id=13,price=95,qty=15
+ADD,13,SELL,95,15
+
+# Scenario 8: Cancel non-existent order
+# Cancel ID 999, which has never been added.
+# Expected Output: CANCEL_FAILED,id=999
+CANCEL,999
+
+# Scenario 9: Self-match (normal matching, no wash sale prevention)
+# Add Buy 14 at 105 (qty 10).
+ADD,14,BUY,105,10
+# Add Sell 15 at 105 (qty 10) from the same mock trader.
+# Expected Output: TRADE,maker_id=14,taker_id=15,price=105,qty=10
+ADD,15,SELL,105,10
+
+# Scenario 10: Sell crosses multiple levels and rests remaining quantity
+# Rest two buy orders: Bid 16 at 90 (qty 5), Bid 17 at 89 (qty 5).
+ADD,16,BUY,90,5
+ADD,17,BUY,89,5
+# Incoming Sell 18 at 88 (qty 15).
+# Expected Output:
+#   TRADE,maker_id=16,taker_id=18,price=90,qty=5
+#   TRADE,maker_id=17,taker_id=18,price=89,qty=5
+# Remaining 5 units of Sell 18 should rest as Ask at price 88.
+ADD,18,SELL,88,15
